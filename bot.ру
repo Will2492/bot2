@@ -1,0 +1,100 @@
+from telegram import (
+    LabeledPrice,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    PreCheckoutQueryHandler,
+    ContextTypes,
+)
+
+# Токен вашего бота от BotFather
+BOT_TOKEN = "ВАШ_TELEGRAM_BOT_TOKEN"
+
+# Суммы пакетов в рублях (цену провайдер принимает в самой мелкой единице: копейках)
+PRICE_LIST = {
+    "stars_10": [LabeledPrice("10 Stars", 100 * 100)],   # 100 ₽
+    "stars_25": [LabeledPrice("25 Stars", 225 * 100)],   # 225 ₽ (скидка)
+    "stars_50": [LabeledPrice("50 Stars", 400 * 100)],   # 400 ₽
+}
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Приветствие и кнопки выбора пакета Stars."""
+    keyboard = [
+        [
+            InlineKeyboardButton("10 ⭐ за 100 ₽", callback_data="stars_10"),
+            InlineKeyboardButton("25 ⭐ за 225 ₽", callback_data="stars_25"),
+        ],
+        [InlineKeyboardButton("50 ⭐ за 400 ₽", callback_data="stars_50")],
+    ]
+    await update.message.reply_text(
+        "Добро пожаловать! Выберите пакет Stars для покупки:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляем счёт (Invoice) пользователю."""
+    query = update.callback_query
+    await query.answer()
+    choice = query.data  # e.g. 'stars_10'
+    prices = PRICE_LIST[choice]
+
+    await context.bot.send_invoice(
+        chat_id=update.effective_chat.id,
+        title=f"Пакет {prices[0].label}",
+        description=f"Покупка {prices[0].label} для использования в вашем чате.",
+        payload=choice,            # служебный идентификатор заказа
+        provider_token="ВАШ_PROVIDER_TOKEN",  # из BotFather
+        currency="RUB",
+        prices=prices,
+        start_parameter=choice
+    )
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка Pre-Checkout (продолжаем оплату)."""
+    query = update.pre_checkout_query
+    # Всегда отвечаем OK, иначе платеж отменится
+    await query.answer(ok=True)
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """После успешной оплаты — начисляем Stars и подтверждаем."""
+    payment = update.message.successful_payment
+    user_id = update.effective_user.id
+    payload = payment.invoice_payload  # 'stars_10' и т.д.
+
+    # Здесь: логика сохранения/начисления пользователю
+    # Например, сохранить в базу: add_stars(user_id, payload)
+
+    await update.message.reply_text(
+        f"Спасибо за покупку!\n"
+        f"Вы приобрели пакет: *{payment.total_amount // 100}* ₽\n"
+        f"Stars начислены на ваш счёт 🎉",
+        parse_mode="Markdown"
+    )
+
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(buy_callback, pattern="^stars_"))
+    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    app.add_handler(CommandHandler("help", start))
+    app.add_handler(
+        CommandHandler(
+            "success", successful_payment_callback
+        )  # хотя фактически этот хендлер не нужен, если вы ловите через message handler:
+    )
+    # Ловим успешную оплату как MessageHandler:
+    from telegram.ext import MessageHandler, filters
+    app.add_handler(
+        MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback)
+    )
+
+    app.run_polling()
+
+if name == "__main__":
+    main()
